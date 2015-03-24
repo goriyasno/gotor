@@ -61,18 +61,18 @@ func (s *Stream) Run(circID CircuitID, circWindow *Window, queue CircReadQueue, 
 	if !(addr.Type == 4 || addr.Type == 6) {
 		queue <- &StreamControl{
 			circuitID: circID,
-			streamID: s.id,
-			data: STREAM_DISCONNECTED,
-			reason: STREAM_REASON_RESOLVEFAILED,
+			streamID:  s.id,
+			data:      STREAM_DISCONNECTED,
+			reason:    STREAM_REASON_RESOLVEFAILED,
 		}
 	}
 
 	if !isDir && !ep.AllowsConnect(addr.Value, port) {
 		queue <- &StreamControl{
-			circuitID: circID,
-			streamID: s.id,
-			data: STREAM_DISCONNECTED,
-			reason: STREAM_REASON_EXITPOLICY,
+			circuitID:  circID,
+			streamID:   s.id,
+			data:       STREAM_DISCONNECTED,
+			reason:     STREAM_REASON_EXITPOLICY,
 			remoteAddr: addr.Value,
 		}
 		return
@@ -180,10 +180,10 @@ func (s *Stream) reader(conn net.Conn, circWindow *Window, queue chan []byte) {
 			close(queue)
 			return
 		}
-		for i := 0; i < bytes;  {
+		for i := 0; i < bytes; {
 			s := MAX_RELAY_LEN
 			if s > bytes-i {
-				s = bytes-i
+				s = bytes - i
 			}
 			cell := GetCellBuf(false)
 			copy(cell, readBuf[i:])

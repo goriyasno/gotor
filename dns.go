@@ -5,8 +5,8 @@
 package main
 
 import (
-	"net"
 	"github.com/miekg/dns"
+	"net"
 )
 
 type DNSAddress struct {
@@ -71,15 +71,15 @@ func ResolveDNS(host string) []DNSAddress {
 		if a, ok := answer.(*dns.A); ok {
 			r = append(r, DNSAddress{
 				Value: []byte(a.A.To4()),
-				Type: 4,
-				TTL: int(a.Hdr.Ttl),
+				Type:  4,
+				TTL:   int(a.Hdr.Ttl),
 			})
 		}
 		if aaaa, ok := answer.(*dns.AAAA); ok {
 			r = append(r, DNSAddress{
 				Value: []byte(aaaa.AAAA.To16()),
-				Type: 6,
-				TTL: int(aaaa.Hdr.Ttl),
+				Type:  6,
+				TTL:   int(aaaa.Hdr.Ttl),
 			})
 		}
 	}
