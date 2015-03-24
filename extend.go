@@ -6,6 +6,7 @@ package main
 
 import (
 	"errors"
+	"log"
 )
 
 func (c *OnionConnection) handleRelayExtend(circ *Circuit, cell *RelayCell) ActionableError {
@@ -151,12 +152,23 @@ func (c *OnionConnection) handleRelayExtend2(circ *Circuit, cell *RelayCell) Act
 }
 
 func (c *OnionConnection) handleCreated(cell Cell, newHandshake bool) ActionableError {
-	circ, ok := c.relayCircuits[cell.CircID()]
-	if !ok {
+	var ourCirc *ProxyCircuit
+	var theirCirc *RelayCircuit
+
+	circid := cell.CircID()
+
+	ourCirc, ours := c.proxyCircuits[circid]
+	theirCirc, theirs := c.relayCircuits[circid]
+
+	if !ours && !theirs {
 		return RefuseCircuit(errors.New(cell.Command().String()+": no such circuit?"), DESTROY_REASON_PROTOCOL)
 	}
 
-	Log(LOG_CIRC, "got a created: %d", cell.CircID())
+	if ours && theirs {
+		return RefuseCircuit(errors.New(cell.Command().String()+": ours and theirs?"), DESTROY_REASON_PROTOCOL)
+	}
+
+	Log(LOG_CIRC, "got a created: %d", circid)
 
 	data := cell.Data()
 	hlen := 148
@@ -172,11 +184,26 @@ func (c *OnionConnection) handleCreated(cell Cell, newHandshake bool) Actionable
 	hdata := make([]byte, hlen) // XXX use a cellbuf
 	copy(hdata, data[pos:pos+hlen])
 
-	// Relay the good news
-	circ.previousHop <- &CircuitCreated{
-		id:            circ.theirID,
-		handshakeData: hdata,
-		newHandshake:  newHandshake,
+	if theirs {
+		// Relay the good news
+		theirCirc.previousHop <- &CircuitCreated{
+			id:            theirCirc.theirID,
+			handshakeData: hdata,
+			newHandshake:  newHandshake,
+		}
+	}
+
+	if ours {
+		kdf, err := NtorClientComplete(ourCirc.extendState, hdata)
+		if err != nil {
+			log.Println("finishing the ntor handshake didn't work")
+			log.Println(err)
+			return nil
+		}
+		Log(LOG_CIRC, "finished the ntor handshake")
+
+		circ := ProxyCircuit(*NewCircuit(circid, kdf[0:20], kdf[20:40], kdf[40:56], kdf[56:72]))
+		c.proxyCircuits[circid] = &circ
 	}
 
 	return nil
@@ -239,11 +266,18 @@ func (req *CircuitRequest) Handle(c *OnionConnection, notreallyanthingatall *Cir
 		copy(data, req.handshakeData)
 	}
 
-	// XXX if they send data before the created2, it'll nicely work
-	c.relayCircuits[writeCell.CircID()] = &RelayCircuit{
-		id:          writeCell.CircID(),
-		theirID:     req.localID,
-		previousHop: req.successQueue,
+	if req.weAreInitiator {
+		c.proxyCircuits[writeCell.CircID()] = &ProxyCircuit{
+			id:          writeCell.CircID(),
+			extendState: req.handshakeState,
+		}
+	} else {
+		// XXX if they send data before the created2, it'll nicely work
+		c.relayCircuits[writeCell.CircID()] = &RelayCircuit{
+			id:          writeCell.CircID(),
+			theirID:     req.localID,
+			previousHop: req.successQueue,
+		}
 	}
 
 	c.writeQueue <- writeCell.Bytes()

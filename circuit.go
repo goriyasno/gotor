@@ -52,16 +52,21 @@ type Circuit struct {
 	extendState *CircuitHandshakeState
 }
 
+type ProxyCircuit Circuit
+
 type RelayCircuit struct {
 	id, theirID CircuitID
 	previousHop CircReadQueue
 }
 
 type CircuitHandshakeState struct {
-	lock      sync.Mutex
-	aborted   bool
-	nextHop   CircReadQueue
-	nextHopID CircuitID
+	lock        sync.Mutex
+	aborted     bool
+	nextHop     CircReadQueue
+	nextHopID   CircuitID
+	keys        [2][32]byte
+	fingerprint [20]byte
+	onionPublic [32]byte
 }
 
 type CircuitRequest struct {
@@ -73,6 +78,7 @@ type CircuitRequest struct {
 	handshakeData  []byte
 	newHandshake   bool
 	handshakeState *CircuitHandshakeState
+	weAreInitiator bool
 }
 
 type CircuitCreated struct {

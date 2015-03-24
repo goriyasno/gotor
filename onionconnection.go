@@ -22,6 +22,7 @@ type OnionConnection struct {
 	circuitReadQueue CircReadQueue
 	writeQueue       chan []byte
 	circuits         map[CircuitID]*Circuit
+	proxyCircuits    map[CircuitID]*ProxyCircuit
 	relayCircuits    map[CircuitID]*RelayCircuit
 
 	usedTLSCtx        *TorTLS
@@ -40,6 +41,7 @@ func newOnionConnection(tlsctx *TorTLS, or *ORCtx) *OnionConnection {
 	return &OnionConnection{
 		usedTLSCtx:       tlsctx,
 		circuits:         make(map[CircuitID]*Circuit),
+		proxyCircuits:    make(map[CircuitID]*ProxyCircuit),
 		relayCircuits:    make(map[CircuitID]*RelayCircuit),
 		readQueue:        make(chan Cell, READ_QUEUE_LENGTH),
 		writeQueue:       make(chan []byte, WRITE_QUEUE_LENGTH),
