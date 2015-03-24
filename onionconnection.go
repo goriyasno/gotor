@@ -154,10 +154,12 @@ handshake:
 			// Ignore
 
 		case CMD_AUTH_CHALLENGE:
-			err := me.handleAuthChallenge(cell, hash_inbound, hash_outbound, tlsConn)
-			if err != nil {
-				Log(LOG_INFO, "%s", err)
-				return
+			if or.config.IsPublicServer {
+				err := me.handleAuthChallenge(cell, hash_inbound, hash_outbound, tlsConn)
+				if err != nil {
+					Log(LOG_INFO, "%s", err)
+					return
+				}
 			}
 
 		case CMD_CERTS:
