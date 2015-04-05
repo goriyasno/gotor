@@ -7,6 +7,7 @@ package main
 import (
 	"github.com/tvdw/gotor/aes"
 	"github.com/tvdw/gotor/sha1"
+	"io"
 	"sync"
 )
 
@@ -52,16 +53,33 @@ type Circuit struct {
 	extendState *CircuitHandshakeState
 }
 
+type ProxyCircuit struct {
+	Circuit
+	prevHopID      CircuitID
+	forwardChain   []DirectionalCircuitState
+	backwardChain  []DirectionalCircuitState
+	pendingStreams map[StreamID]*PendingStream
+}
+
+type PendingStream struct {
+	id        StreamID
+	socksConn io.ReadWriteCloser
+}
+
 type RelayCircuit struct {
 	id, theirID CircuitID
 	previousHop CircReadQueue
 }
 
 type CircuitHandshakeState struct {
-	lock      sync.Mutex
-	aborted   bool
-	nextHop   CircReadQueue
-	nextHopID CircuitID
+	lock        sync.Mutex
+	aborted     bool
+	nextHop     CircReadQueue
+	nextHopID   CircuitID
+	keys        [2][32]byte
+	fingerprint [20]byte
+	onionPublic [32]byte
+	whenDone    chan CircuitID
 }
 
 type CircuitRequest struct {
@@ -73,6 +91,8 @@ type CircuitRequest struct {
 	handshakeData  []byte
 	newHandshake   bool
 	handshakeState *CircuitHandshakeState
+	weAreInitiator bool
+	extendCircId   CircuitID
 }
 
 type CircuitCreated struct {
@@ -208,7 +228,7 @@ func (c *OnionConnection) NewCircID() CircuitID {
 		}
 
 		_, exists := c.circuits[cID]
-		if !exists { // XXX check infinite loop
+		if !exists { // XXX check infinite loop // check proxycircuits
 			return cID
 		}
 	}

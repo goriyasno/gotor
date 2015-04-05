@@ -34,6 +34,50 @@ func (c *OnionConnection) handleRelayBackward(circ *RelayCircuit, cell Cell) Act
 	return nil
 }
 
+func (c *OnionConnection) handleRelayProxy(circ *ProxyCircuit, cell Cell) ActionableError {
+	data := cell.Data()
+
+	for i := 0; i < len(circ.backwardChain); i++ {
+		circ.backwardChain[i].cipher.Crypt(data, data)
+	}
+	rcell := RelayCell{data}
+
+	if rcell.Command() == RELAY_EXTENDED2 {
+		pcell := NewCell4(cell.CircID(), CMD_CREATED2, rcell.Data())
+		return c.handleCreated(pcell, true)
+	} else if rcell.Command() == RELAY_CONNECTED {
+		pendingStream, ok := circ.pendingStreams[rcell.StreamID()]
+		if !ok {
+			fmt.Println("NOT OK")
+			return nil
+		}
+		err = FinishSocks(pendingStream.socksConn)
+		if err != nil {
+			fmt.Println(err)
+			return nil
+		}
+		stream, err := NewStream(pendingStream.id)
+		if err != nil {
+			fmt.Println(err)
+			return nil
+		}
+		if circ.streams == nil {
+			circ.streams = make(map[StreamID]*Stream)
+		}
+		circ.streams[stream.id] = stream
+		go stream.ProxyRun(circ.id, circ.backwardWindow, c.circuitReadQueue, pendingStream.socksConn)
+		return nil
+	} else if rcell.Command() == RELAY_DATA {
+		c.handleRelayDataProxy(circ, &rcell)
+		return nil
+	} else if rcell.Command() == RELAY_END {
+		fmt.Println("GOT RELAY END, FIGURE THIS OUT")
+	}
+	fmt.Println("unknown rcell command", rcell.Command().String())
+
+	return nil
+}
+
 func (c *OnionConnection) handleRelayForward(circ *Circuit, cell Cell) ActionableError {
 	cstate := circ.forward
 
@@ -283,6 +327,7 @@ func (c *OnionConnection) handleRelaySendme(circ *Circuit, cell *RelayCell) Acti
 	return nil
 }
 
+// this one takes onion stuff and sends it to our exit connection
 func (c *OnionConnection) handleRelayData(circ *Circuit, cell *RelayCell) ActionableError {
 	circ.forwardWindow--
 	if circ.forwardWindow <= 900 {
@@ -302,6 +347,27 @@ func (c *OnionConnection) handleRelayData(circ *Circuit, cell *RelayCell) Action
 	ok = stream.forwardWindow.TryTake()
 	if !ok {
 		return CloseStream(errors.New("Refusing to overflow window"), STREAM_REASON_TORPROTOCOL)
+	}
+
+	data := cell.Data()
+	// gotta copy that
+	dataCopy := GetCellBuf(false)
+	copy(dataCopy, data)
+
+	stream.writeChan <- dataCopy[0:len(data)]
+
+	return nil
+}
+
+//mega copypaste
+//figure out window stuff...
+//this one takes onion stuff and shoves it onto our local socks connection
+func (c *OnionConnection) handleRelayDataProxy(pc *ProxyCircuit, cell *RelayCell) ActionableError {
+	streamID := cell.StreamID()
+	stream, ok := pc.streams[streamID]
+	if !ok {
+		Log(LOG_INFO, "ignoring data for stream we don't know")
+		return nil
 	}
 
 	data := cell.Data()

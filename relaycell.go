@@ -37,3 +37,7 @@ func (c *RelayCell) Length() int {
 func (c *RelayCell) Data() []byte {
 	return c.bytes[11 : 11+c.Length()]
 }
+
+func (c RelayCell) Bytes() []byte {
+	return c.bytes
+}

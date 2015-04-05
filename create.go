@@ -185,11 +185,12 @@ func (c *OnionConnection) handleCreateNTOR(circID CircuitID, data []byte, newHan
 		return CloseConnection(errors.New("nope"))
 	}
 
-	fingerprint := data[0:20]
+	var fingerprint [20]byte
+	copy(fingerprint[:], data[0:20])
 	myFingerprint := c.usedTLSCtx.Fingerprint
 	for i, v := range fingerprint {
 		if v != myFingerprint[i] {
-			Log(LOG_INFO, "FP mismatch %s != %s", myFingerprint, fingerprint)
+			Log(LOG_INFO, "FP mismatch %s != %s", myFingerprint, Fingerprint(fingerprint))
 			return RefuseCircuit(errors.New("that's not me"), DESTROY_REASON_PROTOCOL)
 		}
 	}
@@ -219,7 +220,7 @@ func (c *OnionConnection) handleCreateNTOR(circID CircuitID, data []byte, newHan
 	curve25519.ScalarMult(&tmpHolder, &c.parentOR.ntorPrivate, &key_X)
 	buffer.Write(tmpHolder[:])
 
-	buffer.Write(fingerprint)
+	buffer.Write(fingerprint[:])
 	buffer.Write(c.parentOR.ntorPublic[:])
 	buffer.Write(key_X[:])
 	buffer.Write(key_Y[:])
@@ -234,7 +235,7 @@ func (c *OnionConnection) handleCreateNTOR(circID CircuitID, data []byte, newHan
 
 	buffer.Reset()
 	buffer.Write(verify)
-	buffer.Write(fingerprint)
+	buffer.Write(fingerprint[:])
 	buffer.Write(c.parentOR.ntorPublic[:])
 	buffer.Write(key_Y[:])
 	buffer.Write(key_X[:])

@@ -12,6 +12,7 @@ import (
 	"github.com/tvdw/openssl"
 	"golang.org/x/crypto/curve25519"
 	"io/ioutil"
+	"math/rand"
 	"net"
 	"os"
 	"sync"
@@ -58,8 +59,14 @@ func NewOR(torConf *Config) (*ORCtx, error) {
 
 	if _, err := os.Stat(torConf.DataDirectory + "/keys/secret_id_key"); os.IsNotExist(err) {
 		Log(LOG_INFO, "Generating new keys")
-		os.Mkdir(torConf.DataDirectory, 0755)
-		os.Mkdir(torConf.DataDirectory+"/keys", 0700)
+		err = os.Mkdir(torConf.DataDirectory, 0755)
+		if err != nil {
+			panic(err)
+		}
+		err = os.Mkdir(torConf.DataDirectory+"/keys", 0700)
+		if err != nil {
+			panic(err)
+		}
 
 		{
 			newIDKey, err := openssl.GenerateRSAKeyWithExponent(1024, 65537)
@@ -265,6 +272,19 @@ func (or *ORCtx) RequestCircuit(req *CircuitRequest) error {
 		}
 	}
 
+	//todo check aborted lock?
+	if req.extendCircId != 0 {
+		fmt.Println("looking for", req.extendCircId)
+		for _, conn := range or.authenticatedConnections {
+			_, ok := conn.proxyCircuits[req.extendCircId]
+			if ok {
+				conn.circuitReadQueue <- req
+				return nil
+			}
+		}
+		return errors.New("Can't extend from nonexistent circuit")
+	}
+
 	// Try and dial
 	go func() {
 		addresses := req.connHint.GetAddresses()
@@ -301,4 +321,108 @@ func (or *ORCtx) RequestCircuit(req *CircuitRequest) error {
 	}()
 
 	return nil
+}
+
+func (or *ORCtx) RequestProxyCircuit(extCirc CircuitID, theirAddress []byte, theirFingerprint Fingerprint, theirPublic [32]byte) (chan CircuitID, error) {
+	doneChan := make(chan CircuitID)
+
+	var curveDataPriv [32]byte
+	var curveDataPub [32]byte
+	CRandBytes(curveDataPriv[0:32])
+	curveDataPriv[0] &= 248
+	curveDataPriv[31] &= 127
+	curveDataPriv[31] |= 64
+	curve25519.ScalarBaseMult(&curveDataPub, &curveDataPriv)
+
+	hdata, err := NtorClientPayload(theirFingerprint, theirPublic, curveDataPub)
+	if err != nil {
+		return nil, err
+	}
+	err = or.RequestCircuit(&CircuitRequest{
+		connHint: ConnectionHint{
+			address: [][]byte{theirAddress},
+		},
+		handshakeState: &CircuitHandshakeState{
+			keys:        [2][32]byte{curveDataPriv, curveDataPub},
+			fingerprint: theirFingerprint,
+			onionPublic: theirPublic,
+			whenDone:    doneChan,
+		},
+		newHandshake:   true,
+		handshakeType:  uint16(HANDSHAKE_NTOR),
+		handshakeData:  hdata[:],
+		weAreInitiator: true,
+		extendCircId:   extCirc,
+	})
+	return doneChan, err
+}
+
+func (or *ORCtx) DestroyAllProxyCircuits() {
+	for _, conn := range or.authenticatedConnections {
+		for _, pc := range conn.proxyCircuits {
+			fmt.Println("queueing destroy for circuit", pc.id)
+			conn.writeQueue <- NewCell(conn.negotiatedVersion, pc.id, CMD_DESTROY, []byte{0}).Bytes()
+		}
+	}
+}
+
+func (or *ORCtx) RandomConnection() (*OnionConnection, error) {
+	for _, conn := range or.authenticatedConnections {
+		return conn, nil
+	}
+	return nil, errors.New("no connections")
+}
+
+func (or *ORCtx) ListConns() {
+	for fp, conn := range or.authenticatedConnections {
+		for pc, _ := range conn.proxyCircuits {
+			fmt.Printf("conn %s has pc %d\n", fp.String(), pc)
+		}
+	}
+}
+
+// this thing encrypts a relay cell down a proxy circuit
+// copy paste mostly from sendrelaycell
+func (c *OnionConnection) sendProxyCell(pc *ProxyCircuit, stream StreamID, command RelayCommand, data []byte) ActionableError {
+	if len(data) > MAX_RELAY_LEN {
+		panic("Somehow we're trying to send a massive cell")
+	}
+
+	cell := NewCell(c.negotiatedVersion, pc.id, CMD_RELAY, nil)
+	buf := cell.Data()
+
+	// The rest will be crypto'd
+	buf[0] = byte(command)
+	buf[1] = 0 // recognized
+	buf[2] = 0
+	BigEndian.PutUint16(buf[3:5], uint16(stream))
+
+	// placeholder for digest
+
+	if data != nil && len(data) != 0 {
+		BigEndian.PutUint16(buf[9:11], uint16(len(data)))
+		copy(buf[11:], data)
+	}
+
+	pc.forwardChain[len(pc.forwardChain)-1].digest.Write(buf)
+	digest := pc.forwardChain[len(pc.forwardChain)-1].digest.Sum(nil)
+	buf[5] = digest[0]
+	buf[6] = digest[1]
+	buf[7] = digest[2]
+	buf[8] = digest[3]
+
+	// Now AES it
+
+	for i := len(pc.forwardChain) - 1; i >= 0; i-- {
+	    fmt.Println("crypting with", pc.forwardChain[i])
+		pc.forwardChain[i].cipher.Crypt(buf, buf)
+	}
+
+	c.writeQueue <- cell.Bytes() // XXX this could deadlock
+
+	return nil
+}
+
+func NewStreamID() StreamID {
+	return StreamID(rand.Intn(256*255) + 1)
 }

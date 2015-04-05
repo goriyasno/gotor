@@ -61,6 +61,12 @@ func (c *OnionConnection) handleDestroy(cell Cell) ActionableError {
 		return nil
 	}
 
+	_, ok = c.proxyCircuits[circID]
+	if ok {
+		Log(LOG_INFO, "figure out how to destroy a proxy circuit sometime")
+		return nil
+	}
+
 	Log(LOG_INFO, "Got a DESTROY but we don't know the circuit they're talking about. Ignoring")
 	return nil
 }

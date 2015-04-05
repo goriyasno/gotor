@@ -6,6 +6,7 @@ package main
 
 import (
 	"crypto/sha256"
+	"errors"
 	"io"
 	"net"
 )
@@ -22,6 +23,7 @@ type OnionConnection struct {
 	circuitReadQueue CircReadQueue
 	writeQueue       chan []byte
 	circuits         map[CircuitID]*Circuit
+	proxyCircuits    map[CircuitID]*ProxyCircuit
 	relayCircuits    map[CircuitID]*RelayCircuit
 
 	usedTLSCtx        *TorTLS
@@ -40,12 +42,20 @@ func newOnionConnection(tlsctx *TorTLS, or *ORCtx) *OnionConnection {
 	return &OnionConnection{
 		usedTLSCtx:       tlsctx,
 		circuits:         make(map[CircuitID]*Circuit),
+		proxyCircuits:    make(map[CircuitID]*ProxyCircuit),
 		relayCircuits:    make(map[CircuitID]*RelayCircuit),
 		readQueue:        make(chan Cell, READ_QUEUE_LENGTH),
 		writeQueue:       make(chan []byte, WRITE_QUEUE_LENGTH),
 		circuitReadQueue: make(CircReadQueue, CIRC_QUEUE_LENGTH),
 		parentOR:         or,
 	}
+}
+
+func (c *OnionConnection) randomProxyCircuit() (*ProxyCircuit, error) {
+	for _, pc := range c.proxyCircuits {
+		return pc, nil
+	}
+	return nil, errors.New("no connections")
 }
 
 func (c *OnionConnection) cleanup() {
@@ -154,10 +164,12 @@ handshake:
 			// Ignore
 
 		case CMD_AUTH_CHALLENGE:
-			err := me.handleAuthChallenge(cell, hash_inbound, hash_outbound, tlsConn)
-			if err != nil {
-				Log(LOG_INFO, "%s", err)
-				return
+			if or.config.IsPublicServer {
+				err := me.handleAuthChallenge(cell, hash_inbound, hash_outbound, tlsConn)
+				if err != nil {
+					Log(LOG_INFO, "%s", err)
+					return
+				}
 			}
 
 		case CMD_CERTS:
@@ -276,7 +288,7 @@ func (me *OnionConnection) Runloop() {
 			circID = cell.CircID()
 
 			if cell.Command() != CMD_PADDING {
-				Log(LOG_DEBUG, "%s got a %s: %v", me.theirFingerprint, cell.Command(), cell)
+				Log(LOG_DEBUG, "%s got a %s: %v", me.parentOR.serverTlsCtx.Fingerprint, cell.Command(), cell)
 			}
 
 			err = me.routeCellToFunction(cell)

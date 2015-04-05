@@ -4,6 +4,10 @@
 
 package main
 
+import (
+	"fmt"
+)
+
 type StreamData struct {
 	NeverForRelay
 	circuitID CircuitID
@@ -25,6 +29,17 @@ func (sd *StreamData) Handle(c *OnionConnection, circ *Circuit) ActionableError 
 		}
 
 		data := data[pos : pos+thisLen]
+		pc, ok := c.proxyCircuits[circ.id]
+		if ok {
+			c.sendProxyCell(pc, sd.streamID, RELAY_DATA, data)
+			return nil
+		}
+
+		_, ok = c.circuits[circ.id]
+		if !ok {
+			fmt.Println("SOMETHING BAD")
+		}
+
 		if err := c.sendRelayCell(circ, sd.streamID, BackwardDirection, RELAY_DATA, data); err != nil {
 			return err
 		}

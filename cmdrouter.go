@@ -55,6 +55,14 @@ func (c *OnionConnection) routeCellToFunction(cell Cell) ActionableError {
 			return c.handleRelayBackward(rcirc, cell)
 		}
 
+		pcirc, ok := c.proxyCircuits[circID]
+		if ok {
+			if cell.Command() == CMD_RELAY_EARLY {
+				return CloseConnection(errors.New("Dropping the connection - no way we're routing a RELAY_EARLY cell back"))
+			}
+			return c.handleRelayProxy(pcirc, cell)
+		}
+
 		// Not an error
 		Log(LOG_INFO, "Received a %s cell for an unknown circuit - dropping", cell.Command())
 
@@ -93,12 +101,17 @@ func (c *OnionConnection) routeCircuitCommandToFunction(cmd CircuitCommand) Acti
 
 		// Look in c.circuits
 		circ, ok := c.circuits[circID]
-		if !ok {
-			Log(LOG_INFO, "got internal command for nonexisting circuit %v", cmd)
-			return nil // It happens, nothing to worry about
+		if ok {
+			return cmd.Handle(c, circ)
 		}
 
-		return cmd.Handle(c, circ)
+		pc, ok := c.proxyCircuits[circID]
+		if ok {
+			return cmd.Handle(c, &(pc.Circuit))
+		}
+
+		Log(LOG_INFO, "got internal command for nonexisting circuit %v", cmd)
+		return nil // It happens, nothing to worry about
 	} else {
 		if circID == 0 { // Control command
 			return cmd.HandleRelay(c, nil)
